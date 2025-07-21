@@ -412,7 +412,10 @@ int ff_vk_exec_pool_init(FFVulkanContext *s, FFVkQueueFamilyCtx *qf,
         e->parent = pool;
 
         /* Query data */
-        e->query_data = ((uint8_t *)pool->query_data) + pool->qd_size*i;
+        e->query_data = (uint8_t *)pool->query_data;
+        if (pool->qd_size*i != 0) {
+            e->query_data += pool->qd_size*i;
+        }
         e->query_idx = nb_queries*i;
 
         /* Command buffer */
