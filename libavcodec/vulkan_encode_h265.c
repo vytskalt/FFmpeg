@@ -1697,6 +1697,7 @@ static av_cold int vulkan_encode_h265_init(AVCodecContext *avctx)
 static av_cold int vulkan_encode_h265_close(AVCodecContext *avctx)
 {
     VulkanEncodeH265Context *enc = avctx->priv_data;
+    ff_cbs_close(&enc->cbs);
     ff_vulkan_encode_uninit(&enc->common);
     return 0;
 }
