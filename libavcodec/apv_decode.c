@@ -35,6 +35,16 @@
 #include "thread.h"
 
 
+typedef struct APVDerivedTileInfo {
+    uint8_t  tile_cols;
+    uint8_t  tile_rows;
+    uint16_t num_tiles;
+    // The spec uses an extra element on the end of these arrays
+    // not corresponding to any tile.
+    uint16_t col_starts[APV_MAX_TILE_COLS + 1];
+    uint16_t row_starts[APV_MAX_TILE_ROWS + 1];
+} APVDerivedTileInfo;
+
 typedef struct APVDecodeContext {
     CodedBitstreamContext *cbc;
     APVDSPContext dsp;
@@ -52,9 +62,9 @@ typedef struct APVDecodeContext {
 static const enum AVPixelFormat apv_format_table[5][5] = {
     { AV_PIX_FMT_GRAY8,    AV_PIX_FMT_GRAY10,     AV_PIX_FMT_GRAY12,     AV_PIX_FMT_GRAY14, AV_PIX_FMT_GRAY16 },
     { 0 }, // 4:2:0 is not valid.
-    { AV_PIX_FMT_YUV422P,  AV_PIX_FMT_YUV422P10,  AV_PIX_FMT_YUV422P12,  AV_PIX_FMT_GRAY14, AV_PIX_FMT_YUV422P16 },
-    { AV_PIX_FMT_YUV444P,  AV_PIX_FMT_YUV444P10,  AV_PIX_FMT_YUV444P12,  AV_PIX_FMT_GRAY14, AV_PIX_FMT_YUV444P16 },
-    { AV_PIX_FMT_YUVA444P, AV_PIX_FMT_YUVA444P10, AV_PIX_FMT_YUVA444P12, AV_PIX_FMT_GRAY14, AV_PIX_FMT_YUVA444P16 },
+    { AV_PIX_FMT_YUV422P,  AV_PIX_FMT_YUV422P10,  AV_PIX_FMT_YUV422P12,  AV_PIX_FMT_YUV422P14, AV_PIX_FMT_YUV422P16 },
+    { AV_PIX_FMT_YUV444P,  AV_PIX_FMT_YUV444P10,  AV_PIX_FMT_YUV444P12,  AV_PIX_FMT_YUV444P14, AV_PIX_FMT_YUV444P16 },
+    { AV_PIX_FMT_YUVA444P, AV_PIX_FMT_YUVA444P10, AV_PIX_FMT_YUVA444P12, 0                   ,AV_PIX_FMT_YUVA444P16 },
 };
 
 static APVVLCLUT decode_lut;
@@ -74,6 +84,11 @@ static int apv_decode_check_format(AVCodecContext *avctx,
     }
     avctx->pix_fmt =
         apv_format_table[header->frame_info.chroma_format_idc][bit_depth - 4 >> 2];
+
+    if (!avctx->pix_fmt) {
+        avpriv_request_sample(avctx, "YUVA444P14");
+        return AVERROR_PATCHWELCOME;
+    }
 
     err = ff_set_dimensions(avctx,
                             FFALIGN(header->frame_info.frame_width,  16),
@@ -179,7 +194,7 @@ static int apv_decode_tile_component(AVCodecContext *avctx, void *data,
     APVRawFrame                      *input = data;
     APVDecodeContext                   *apv = avctx->priv_data;
     const CodedBitstreamAPVContext *apv_cbc = apv->cbc->priv_data;
-    const APVDerivedTileInfo     *tile_info = &apv_cbc->tile_info;
+    const APVDerivedTileInfo     *tile_info = &apv->tile_info;
 
     int tile_index = job / apv_cbc->num_comp;
     int comp_index = job % apv_cbc->num_comp;
@@ -292,12 +307,38 @@ fail:
     return err;
 }
 
+static void apv_derive_tile_info(APVDerivedTileInfo *ti,
+                                 const APVRawFrameHeader *fh)
+{
+    int frame_width_in_mbs  = (fh->frame_info.frame_width  + (APV_MB_WIDTH  - 1)) >> 4;
+    int frame_height_in_mbs = (fh->frame_info.frame_height + (APV_MB_HEIGHT - 1)) >> 4;
+    int start_mb, i;
+
+    start_mb = 0;
+    for (i = 0; start_mb < frame_width_in_mbs; i++) {
+        ti->col_starts[i] = start_mb * APV_MB_WIDTH;
+        start_mb += fh->tile_info.tile_width_in_mbs;
+    }
+    ti->col_starts[i] = frame_width_in_mbs * APV_MB_WIDTH;
+    ti->tile_cols = i;
+
+    start_mb = 0;
+    for (i = 0; start_mb < frame_height_in_mbs; i++) {
+        ti->row_starts[i] = start_mb * APV_MB_HEIGHT;
+        start_mb += fh->tile_info.tile_height_in_mbs;
+    }
+    ti->row_starts[i] = frame_height_in_mbs * APV_MB_HEIGHT;
+    ti->tile_rows = i;
+
+    ti->num_tiles = ti->tile_cols * ti->tile_rows;
+}
+
 static int apv_decode(AVCodecContext *avctx, AVFrame *output,
                       APVRawFrame *input)
 {
     APVDecodeContext                   *apv = avctx->priv_data;
-    const CodedBitstreamAPVContext *apv_cbc = apv->cbc->priv_data;
-    const APVDerivedTileInfo     *tile_info = &apv_cbc->tile_info;
+    const AVPixFmtDescriptor          *desc = NULL;
+    APVDerivedTileInfo           *tile_info = &apv->tile_info;
     int err, job_count;
 
     err = apv_decode_check_format(avctx, &input->frame_header);
@@ -306,6 +347,9 @@ static int apv_decode(AVCodecContext *avctx, AVFrame *output,
         return err;
     }
 
+    desc = av_pix_fmt_desc_get(avctx->pix_fmt);
+    av_assert0(desc);
+
     err = ff_thread_get_buffer(avctx, output, 0);
     if (err < 0)
         return err;
@@ -313,9 +357,11 @@ static int apv_decode(AVCodecContext *avctx, AVFrame *output,
     apv->output_frame = output;
     atomic_store_explicit(&apv->tile_errors, 0, memory_order_relaxed);
 
+    apv_derive_tile_info(tile_info, &input->frame_header);
+
     // Each component within a tile is independent of every other,
     // so we can decode all in parallel.
-    job_count = tile_info->num_tiles * apv_cbc->num_comp;
+    job_count = tile_info->num_tiles * desc->nb_components;
 
     avctx->execute2(avctx, apv_decode_tile_component,
                     input, NULL, job_count);
