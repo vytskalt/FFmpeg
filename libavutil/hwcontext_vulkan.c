@@ -3852,12 +3852,8 @@ static int vulkan_map_from_drm_frame_sync(AVHWFramesContext *hwfc, AVFrame *dst,
             });
 
         err = ff_vk_exec_submit(&p->vkctx, exec);
-        if (err < 0) {
-            ff_vk_exec_discard_deps(&p->vkctx, exec);
+        if (err < 0)
             return err;
-        }
-
-        ff_vk_exec_wait(&p->vkctx, exec);
     } else
 #endif
     {
