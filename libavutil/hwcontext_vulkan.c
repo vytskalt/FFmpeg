@@ -2875,6 +2875,26 @@ static void try_export_flags(AVHWFramesContext *hwfc,
                   (hwctx->img_flags) : hwctx->img_flags ? hwctx->img_flags : (VkImageCreateFlags)(VK_IMAGE_CREATE_ALIAS_BIT),
     };
 
+    VkVideoProfileListInfoKHR profile_list;
+    const VkVideoProfileListInfoKHR *pl =
+        ff_vk_find_struct(hwctx->create_pnext,
+                          VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR);
+    if (pl) {
+        profile_list = *pl;
+        profile_list.pNext = NULL;
+        ff_vk_link_struct(&pinfo, &profile_list);
+    }
+
+    VkImageFormatListCreateInfo format_list;
+    const VkImageFormatListCreateInfo *fl =
+        ff_vk_find_struct(hwctx->create_pnext,
+                          VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO);
+    if (fl) {
+        format_list = *fl;
+        format_list.pNext = NULL;
+        ff_vk_link_struct(&pinfo, &format_list);
+    }
+
     nb_mods = has_mods ? drm_mod_info->drmFormatModifierCount : 1;
     for (int i = 0; i < nb_mods; i++) {
         if (has_mods)
