@@ -223,6 +223,21 @@ fate-kgv1: CMD = framecrc -i $(TARGET_SAMPLES)/kega/kgv1.avi -pix_fmt rgb555le -
 FATE_VIDEO-$(call FRAMECRC, AVI, KMVC, SCALE_FILTER) += fate-kmvc
 fate-kmvc: CMD = framecrc -i $(TARGET_SAMPLES)/KMVC/LOGO1.AVI -an -t 3 -pix_fmt rgb24 -vf scale
 
+FATE_LEAD_VIDEO-$(call FRAMECRC, AVI, LEAD) += fate-lead-yuv420p
+fate-lead-yuv420p: CMD = framecrc -idct simple -fflags +bitexact -i $(TARGET_SAMPLES)/lead/BeforeEmboss1.avi -an
+
+FATE_LEAD_VIDEO-$(call FRAMECRC, AVI, LEAD) += fate-lead-yuv420p-half
+fate-lead-yuv420p-half: CMD = framecrc -idct simple -fflags +bitexact -i $(TARGET_SAMPLES)/lead/DaDa_CMP1.avi -an
+
+FATE_LEAD_VIDEO-$(call FRAMECRC, AVI, LEAD) += fate-lead-yuv420p-zero
+fate-lead-yuv420p-zero: CMD = framecrc -idct simple -fflags +bitexact -i $(TARGET_SAMPLES)/lead/lead_0x0.avi -an
+
+FATE_LEAD_VIDEO-$(call FRAMECRC, AVI, LEAD) += fate-lead-yuv444p
+fate-lead-yuv444p: CMD = framecrc -idct simple -fflags +bitexact -i $(TARGET_SAMPLES)/lead/version320x240i1.avi -an
+
+FATE_VIDEO-yes += $(FATE_LEAD_VIDEO-yes)
+fate-lead: $(FATE_LEAD_VIDEO-yes)
+
 FATE_VIDEO-$(call FRAMECRC, AVI, LSCR) += fate-lscr
 fate-lscr: CMD = framecrc -i $(TARGET_SAMPLES)/lscr/lscr_compr9_short.avi
 
@@ -353,12 +368,12 @@ fate-ulti: CMD = framecrc -i $(TARGET_SAMPLES)/ulti/hit12w.avi -an
 FATE_VIDEO-$(call FRAMECRC, AVI, V210, SCALE_FILTER) += fate-v210
 fate-v210: CMD = framecrc -i $(TARGET_SAMPLES)/v210/v210_720p-partial.avi -pix_fmt yuv422p16be -an -vf scale
 
-FATE_VIDEO-$(call FRAMECRC, MOV, V410, SCALE_FILTER) += fate-v410dec
+FATE_VIDEO-$(call FRAMECRC, MOV, RAWVIDEO, SCALE_FILTER) += fate-v410dec
 fate-v410dec: CMD = framecrc -i $(TARGET_SAMPLES)/v410/lenav410.mov -pix_fmt yuv444p10le -vf scale
 
-FATE_VIDEO-$(call ENCDEC, V410 PGMYUV, AVI IMAGE2, SCALE_FILTER) += fate-v410enc
+FATE_VIDEO-$(call ENCDEC, RAWVIDEO PGMYUV, AVI IMAGE2, SCALE_FILTER) += fate-v410enc
 fate-v410enc: $(VREF)
-fate-v410enc: CMD = md5 -f image2 -c:v pgmyuv -i $(TARGET_PATH)/tests/vsynth1/%02d.pgm -fflags +bitexact -c:v v410 -f avi -vf scale
+fate-v410enc: CMD = md5 -f image2 -c:v pgmyuv -i $(TARGET_PATH)/tests/vsynth1/%02d.pgm -fflags +bitexact -c:v rawvideo -pix_fmt v30xle -f avi -vf scale
 
 FATE_VIDEO-$(call FRAMECRC, SIFF, VB, SCALE_FILTER) += fate-vb
 fate-vb: CMD = framecrc -i $(TARGET_SAMPLES)/SIFF/INTRO_B.VB -t 3 -pix_fmt rgb24 -an -vf scale

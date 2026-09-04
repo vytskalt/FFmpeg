@@ -50,7 +50,6 @@ typedef struct ReferenceFrame {
 static ID3D12Resource *get_reference_only_resource(AVCodecContext *avctx, ID3D12Resource *output_resource)
 {
     D3D12VADecodeContext   *ctx          = D3D12VA_DECODE_CONTEXT(avctx);
-    AVHWFramesContext      *frames_ctx   = D3D12VA_FRAMES_CONTEXT(avctx);
     AVD3D12VADeviceContext *device_hwctx = ctx->device_ctx;
     int i = 0;
     ID3D12Resource *resource = NULL;
@@ -62,8 +61,20 @@ static ID3D12Resource *get_reference_only_resource(AVCodecContext *avctx, ID3D12
         return NULL;
     }
 
-    // find unused resource
-    for (i = 0; i < ctx->max_num_ref; i++) {
+    // Reuse the slot already mapped to this output resource. Output surfaces are
+    // recycled by the frame pool, so without this the same output_resource would
+    // be assigned a new slot every time it is reused, leaking slots until the
+    // pool is exhausted.
+    for (i = 0; i < ctx->max_num_ref + 1; i++) {
+        if (reference_only_map[i].resource != NULL &&
+            reference_only_map[i].output_resource == output_resource) {
+            reference_only_map[i].used = 1;
+            return reference_only_map[i].resource;
+        }
+    }
+
+    // Find an unused resource.
+    for (i = 0; i < ctx->max_num_ref + 1; i++) {
         if (!reference_only_map[i].used && reference_only_map[i].resource != NULL) {
             reference_only_map[i].used = 1;
             resource = reference_only_map[i].resource;
@@ -72,13 +83,13 @@ static ID3D12Resource *get_reference_only_resource(AVCodecContext *avctx, ID3D12
         }
     }
 
-    // find space to allocate
-    for (i = 0; i < ctx->max_num_ref; i++) {
+    // Find space to allocate.
+    for (i = 0; i < ctx->max_num_ref + 1; i++) {
         if (reference_only_map[i].resource == NULL)
             break;
     }
 
-    if (i == ctx->max_num_ref) {
+    if (i == ctx->max_num_ref + 1) {
         av_log(avctx, AV_LOG_ERROR, "No space for new Reference frame!\n");
         return NULL;
     }
@@ -106,7 +117,7 @@ static void free_reference_only_resources(AVCodecContext *avctx)
     int i;
     ReferenceFrame *reference_only_map = ctx->reference_only_map;
     if (reference_only_map != NULL) {
-        for (i = 0; i < ctx->max_num_ref; i++) {
+        for (i = 0; i < ctx->max_num_ref + 1; i++) {
             if (reference_only_map[i].resource != NULL) {
                 D3D12_OBJECT_RELEASE(reference_only_map[i].resource);
             }
@@ -124,7 +135,7 @@ static void prepare_reference_only_resources(AVCodecContext *avctx)
     if (reference_only_map == NULL)
         return;
     memset(ctx->ref_only_resources, 0, ctx->max_num_ref * sizeof(*(ctx->ref_only_resources)));
-    for (j = 0; j < ctx->max_num_ref; j++) {
+    for (j = 0; j < ctx->max_num_ref + 1; j++) {
         for (i = 0; i < ctx->max_num_ref; i++) {
             if (reference_only_map[j].used && reference_only_map[j].output_resource == ctx->ref_resources[i]) {
                 ctx->ref_only_resources[i] = reference_only_map[j].resource;
@@ -380,7 +391,11 @@ int ff_d3d12va_common_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames
     AVHWFramesContext *frames_ctx = (AVHWFramesContext *)hw_frames_ctx->data;
 
     frames_ctx->format    = AV_PIX_FMT_D3D12;
-    frames_ctx->sw_format = avctx->sw_pix_fmt == AV_PIX_FMT_YUV420P10 ? AV_PIX_FMT_P010 : AV_PIX_FMT_NV12;
+    switch (avctx->sw_pix_fmt) {
+    case AV_PIX_FMT_YUV420P10: frames_ctx->sw_format = AV_PIX_FMT_P010; break;
+    case AV_PIX_FMT_YUV420P12: frames_ctx->sw_format = AV_PIX_FMT_P012; break;
+    default:                   frames_ctx->sw_format = AV_PIX_FMT_NV12; break;
+    }
     frames_ctx->width     = avctx->width;
     frames_ctx->height    = avctx->height;
 

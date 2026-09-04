@@ -26,15 +26,11 @@
 
 #include "libswresample/swresample.h"
 
-#undef time
 #include <time.h>
-#undef fprintf
 
 #define SAMPLES 1000
 
 #define SWR_CH_MAX 32
-
-#define ASSERT_LEVEL 2
 
 static double get(uint8_t *a[], int ch, int index, int ch_count, enum AVSampleFormat f){
     const uint8_t *p;
@@ -71,7 +67,7 @@ static void  set(uint8_t *a[], int ch, int index, int ch_count, enum AVSampleFor
     case AV_SAMPLE_FMT_S32: ((int32_t*)p)[index]= av_clipl_int32(llrint(v*2147483647));   break;
     case AV_SAMPLE_FMT_FLT: ((float  *)p)[index]= v;                                      break;
     case AV_SAMPLE_FMT_DBL: ((double *)p)[index]= v;                                      break;
-    default: av_assert2(0);
+    default: av_assert0(0);
     }
 }
 

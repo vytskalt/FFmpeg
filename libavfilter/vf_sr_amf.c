@@ -89,6 +89,7 @@ static int amf_filter_config_output(AVFilterLink *outlink)
     int err;
     AMF_RESULT res;
     enum AVPixelFormat in_format;
+    enum AMF_MEMORY_TYPE mem_type = AMF_MEMORY_UNKNOWN;
 
     err = amf_init_filter_config(outlink, &in_format);
     if (err < 0)
@@ -102,6 +103,10 @@ static int amf_filter_config_output(AVFilterLink *outlink)
     // FIXME: add checks whether we have HW context
     res = ctx->amf_device_ctx->factory->pVtbl->CreateComponent(ctx->amf_device_ctx->factory, ctx->amf_device_ctx->context, AMFHQScaler, &ctx->component);
     AMF_RETURN_IF_FALSE(ctx, res == AMF_OK, AVERROR_FILTER_NOT_FOUND, "CreateComponent(%ls) failed with error %d\n", AMFHQScaler, res);
+
+    mem_type = av_amf_get_memory_type(ctx->amf_device_ctx);
+    if (mem_type != AMF_MEMORY_UNKNOWN)
+        AMF_ASSIGN_PROPERTY_INT64(res, ctx->component, AMF_HQ_SCALER_ENGINE_TYPE, mem_type);
 
     out_size.width = outlink->w;
     out_size.height = outlink->h;
@@ -117,10 +122,13 @@ static int amf_filter_config_output(AVFilterLink *outlink)
     AMF_ASSIGN_PROPERTY_BOOL(res, ctx->component, AMF_HQ_SCALER_FILL, ctx->fill);
     AMF_ASSIGN_PROPERTY_BOOL(res, ctx->component, AMF_HQ_SCALER_KEEP_ASPECT_RATIO, ctx->keep_ratio);
     // Setup default options to skip color conversion
+    ctx->in_color_range = AMF_COLOR_RANGE_UNDEFINED;
+    ctx->in_primaries = AMF_COLOR_PRIMARIES_UNDEFINED;
+    ctx->in_trc = AMF_COLOR_TRANSFER_CHARACTERISTIC_UNDEFINED;
     ctx->color_profile = AMF_VIDEO_CONVERTER_COLOR_PROFILE_UNKNOWN;
-    ctx->color_range = AMF_COLOR_RANGE_UNDEFINED;
-    ctx->primaries = AMF_COLOR_PRIMARIES_UNDEFINED;
-    ctx->trc = AMF_COLOR_TRANSFER_CHARACTERISTIC_UNDEFINED;
+    ctx->out_color_range = AMF_COLOR_RANGE_UNDEFINED;
+    ctx->out_primaries = AMF_COLOR_PRIMARIES_UNDEFINED;
+    ctx->out_trc = AMF_COLOR_TRANSFER_CHARACTERISTIC_UNDEFINED;
 
     res = ctx->component->pVtbl->Init(ctx->component, av_av_to_amf_format(in_format), inlink->w, inlink->h);
     AMF_RETURN_IF_FALSE(avctx, res == AMF_OK, AVERROR_UNKNOWN, "AMFHQScaler-Init() failed with error %d\n", res);
@@ -180,6 +188,5 @@ FFFilter ff_vf_sr_amf = {
     FILTER_INPUTS(amf_filter_inputs),
     FILTER_OUTPUTS(amf_filter_outputs),
     FILTER_QUERY_FUNC(&amf_filter_query_formats),
-    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_AMF_SURFACE),
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 };

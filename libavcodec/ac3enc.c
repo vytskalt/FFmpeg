@@ -32,7 +32,6 @@
 #include "libavutil/avassert.h"
 #include "libavutil/channel_layout.h"
 #include "libavutil/crc.h"
-#include "libavutil/emms.h"
 #include "libavutil/internal.h"
 #include "libavutil/mem.h"
 #include "libavutil/mem_internal.h"
@@ -945,8 +944,6 @@ static void ac3_process_exponents(AC3EncodeContext *s)
     compute_exp_strategy(s);
 
     encode_exponents(s);
-
-    emms_c();
 }
 
 
@@ -1186,16 +1183,22 @@ static void count_frame_bits(AC3EncodeContext *s)
 
         /* coupling coordinates */
         if (block->cpl_in_use) {
+            int cpl_coords_exist = 0;
+
             for (ch = 1; ch <= s->fbw_channels; ch++) {
                 if (block->channel_in_cpl[ch]) {
                     if (!s->eac3 || block->new_cpl_coords[ch] != 2)
                         frame_bits++;
                     if (block->new_cpl_coords[ch]) {
+                        cpl_coords_exist = 1;
                         frame_bits += 2;
                         frame_bits += (4 + 4) * s->num_cpl_bands;
                     }
                 }
             }
+            if (s->channel_mode == AC3_CHMODE_STEREO &&
+                s->phase_flags_in_use && cpl_coords_exist)
+                frame_bits += s->num_cpl_bands;
         }
 
         /* stereo rematrixing */
@@ -1728,7 +1731,7 @@ static void output_audio_block(AC3EncodeContext *s, PutBitContext *pb, int blk)
                     put_bits(pb, 1, block->channel_in_cpl[ch]);
             }
             if (s->channel_mode == AC3_CHMODE_STEREO)
-                put_bits(pb, 1, 0); /* phase flags in use */
+                put_bits(pb, 1, s->phase_flags_in_use);
             start_sub = (s->start_freq[CPL_CH] - 37) / 12;
             end_sub   = (s->cpl_end_freq       - 37) / 12;
             put_bits(pb, 4, start_sub);
@@ -1745,11 +1748,14 @@ static void output_audio_block(AC3EncodeContext *s, PutBitContext *pb, int blk)
 
     /* coupling coordinates */
     if (block->cpl_in_use) {
+        int cpl_coords_exist = 0;
+
         for (ch = 1; ch <= s->fbw_channels; ch++) {
             if (block->channel_in_cpl[ch]) {
                 if (!s->eac3 || block->new_cpl_coords[ch] != 2)
                     put_bits(pb, 1, block->new_cpl_coords[ch]);
                 if (block->new_cpl_coords[ch]) {
+                    cpl_coords_exist = 1;
                     put_bits(pb, 2, block->cpl_master_exp[ch]);
                     for (bnd = 0; bnd < s->num_cpl_bands; bnd++) {
                         put_bits(pb, 4, block->cpl_coord_exp [ch][bnd]);
@@ -1757,6 +1763,11 @@ static void output_audio_block(AC3EncodeContext *s, PutBitContext *pb, int blk)
                     }
                 }
             }
+        }
+        if (s->channel_mode == AC3_CHMODE_STEREO &&
+            s->phase_flags_in_use && cpl_coords_exist) {
+            for (bnd = 0; bnd < s->num_cpl_bands; bnd++)
+                put_bits(pb, 1, s->phase_flags[bnd]);
         }
     }
 
@@ -1987,6 +1998,16 @@ int ff_ac3_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     AC3EncodeContext *const s = avctx->priv_data;
     int ret;
 
+    /* add current frame to queue */
+    if (frame) {
+        ret = ff_af_queue_add(&s->afq, frame);
+        if (ret < 0)
+            return ret;
+    } else {
+        if (!s->afq.remaining_samples || (!s->afq.frame_alloc && !s->afq.frame_count))
+            return 0;
+    }
+
     if (s->options.allow_per_frame_metadata) {
         ret = ac3_validate_metadata(s);
         if (ret)
@@ -1996,7 +2017,7 @@ int ff_ac3_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     if (s->bit_alloc.sr_code == 1 || s->eac3)
         ac3_adjust_frame_size(s);
 
-    s->encode_frame(s, frame->extended_data);
+    s->encode_frame(s, frame);
 
     ac3_apply_rematrixing(s);
 
@@ -2017,8 +2038,9 @@ int ff_ac3_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
         return ret;
     ac3_output_frame(s, avpkt->data);
 
-    if (frame->pts != AV_NOPTS_VALUE)
-        avpkt->pts = frame->pts - ff_samples_to_time_base(avctx, avctx->initial_padding);
+    ret = ff_af_queue_remove(&s->afq, avctx->frame_size, avpkt);
+    if (ret < 0)
+        return ret;
 
     *got_packet_ptr = 1;
     return 0;
@@ -2160,6 +2182,7 @@ av_cold int ff_ac3_encode_close(AVCodecContext *avctx)
 
     for (int ch = 0; ch < s->channels; ch++)
         av_freep(&s->planar_samples[ch]);
+    av_freep(&s->input_samples[0]);
     av_freep(&s->bap_buffer);
     av_freep(&s->bap1_buffer);
     av_freep(&s->mdct_coef_buffer);
@@ -2173,6 +2196,7 @@ av_cold int ff_ac3_encode_close(AVCodecContext *avctx)
     av_freep(&s->cpl_coord_buffer);
     av_freep(&s->fdsp);
 
+    ff_af_queue_close(&s->afq);
     av_tx_uninit(&s->tx);
 
     return 0;
@@ -2422,6 +2446,11 @@ static av_cold int allocate_buffers(AC3EncodeContext *s)
         if (!s->planar_samples[ch])
             return AVERROR(ENOMEM);
     }
+    int ret = av_samples_alloc(s->input_samples, NULL, s->channels,
+                               AC3_BLOCK_SIZE * s->num_blocks,
+                               s->avctx->sample_fmt, 0);
+    if (ret < 0)
+        return ret;
 
     if (!FF_ALLOC_TYPED_ARRAY(s->bap_buffer,         total_coefs)          ||
         !FF_ALLOC_TYPED_ARRAY(s->bap1_buffer,        total_coefs)          ||
@@ -2518,6 +2547,8 @@ av_cold int ff_ac3_encode_init(AVCodecContext *avctx)
     ff_ac3dsp_init(&s->ac3dsp);
 
     dprint_options(s);
+
+    ff_af_queue_init(avctx, &s->afq);
 
     ff_thread_once(&init_static_once, exponent_init);
 

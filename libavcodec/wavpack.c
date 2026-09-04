@@ -67,7 +67,7 @@ typedef enum {
 
 typedef struct WavpackFrameContext {
     AVCodecContext *avctx;
-    int frame_flags;
+    uint32_t frame_flags;
     int stereo, stereo_in;
     int joint;
     uint32_t CRC;
@@ -1611,7 +1611,7 @@ static int wavpack_decode_block(AVCodecContext *avctx, AVFrame *frame, int block
     return 0;
 }
 
-static void wavpack_decode_flush(AVCodecContext *avctx)
+static av_cold void wavpack_decode_flush(AVCodecContext *avctx)
 {
     WavpackContext *s = avctx->priv_data;
 

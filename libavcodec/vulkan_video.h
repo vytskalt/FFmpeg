@@ -20,6 +20,7 @@
 #define AVCODEC_VULKAN_VIDEO_H
 
 #include "avcodec.h"
+#include "libavutil/refstruct.h"
 #include "libavutil/vulkan.h"
 
 #include <vk_video/vulkan_video_codecs_common.h>
@@ -29,16 +30,44 @@
 #define CODEC_VER_PAT(ver) (ver & ((1 << 12) - 1))
 #define CODEC_VER(ver) CODEC_VER_MAJ(ver), CODEC_VER_MIN(ver), CODEC_VER_PAT(ver)
 
+/* DEDICATED-mode queue-exclusive DPB image */
+typedef struct FFVkVideoDPBImage {
+    VkImage img;
+    VkDeviceMemory mem;
+    VkImageView view;
+    VkImageAspectFlags aspect;
+    VkImageLayout layout;
+} FFVkVideoDPBImage;
+
+/* Internal DPB image pool; av_refstruct_pool_get()/av_refstruct_unref() */
+typedef struct FFVkVideoDPB {
+    /* Creation only; destruction uses the stashed handles below, as the
+     * pool may outlive the context */
+    FFVulkanContext *s;
+
+    AVRefStructPool *img_pool; /* FFVkVideoDPBImage entries */
+
+    VkDevice dev;
+    const VkAllocationCallbacks *alloc;
+    PFN_vkDestroyImageView destroy_image_view;
+    PFN_vkDestroyImage destroy_image;
+    PFN_vkFreeMemory free_memory;
+
+    VkFormat format;
+    VkImageUsageFlags usage;
+    VkImageTiling tiling;
+    void *create_pnext;
+    int width, height, nb_layers;
+} FFVkVideoDPB;
+
 typedef struct FFVkVideoSession {
     VkVideoSessionKHR session;
     VkDeviceMemory *mem;
     uint32_t nb_mem;
 
-    VkSamplerYcbcrConversion yuv_sampler;
-
-    AVBufferRef *dpb_hwfc_ref;
+    FFVkVideoDPB *dpb;
     int layered_dpb;
-    AVFrame *layered_frame;
+    FFVkVideoDPBImage *layered_img;
     VkImageView layered_view;
     VkImageAspectFlags layered_aspect;
 } FFVkVideoCommon;
@@ -71,19 +100,29 @@ int ff_vk_h265_level_to_av(StdVideoH265LevelIdc level);
 
 StdVideoH264LevelIdc ff_vk_h264_level_to_vk(int level_idc);
 StdVideoH265LevelIdc ff_vk_h265_level_to_vk(int level_idc);
+StdVideoAV1Level     ff_vk_av1_level_to_vk(int level);
 
 /**
  * Convert profile from/to AV to Vulkan
  */
 StdVideoH264ProfileIdc ff_vk_h264_profile_to_vk(int profile);
 StdVideoH265ProfileIdc ff_vk_h265_profile_to_vk(int profile);
+StdVideoAV1Profile     ff_vk_av1_profile_to_vk(int profile);
 
 /**
  * Creates image views for video frames.
  */
-int ff_vk_create_view(FFVulkanContext *s, FFVkVideoCommon *common,
-                      VkImageView *view, VkImageAspectFlags *aspect,
-                      AVVkFrame *src, VkFormat vkf, int is_dpb);
+int ff_vk_create_view(FFVulkanContext *s, VkImageView *view,
+                      VkImageAspectFlags *aspect, VkImage img,
+                      VkFormat vkf, VkImageUsageFlags usage, int layered);
+
+/**
+ * Initialize the internal DPB image pool.
+ */
+int ff_vk_video_dpb_init(FFVulkanContext *s, FFVkVideoCommon *common,
+                         VkFormat format, VkImageUsageFlags usage,
+                         VkImageTiling tiling, void *create_pnext,
+                         int width, int height, int nb_layers);
 
 /**
  * Initialize video session, allocating and binding necessary memory.

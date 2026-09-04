@@ -256,7 +256,7 @@ static int copy_subcoefs(int16_t *out, const int16_t *in, enum TxfmMode tx,
     // copy the topleft coefficients such that the return value (being the
     // coefficient scantable index for the eob token) guarantees that only
     // the topleft $sub out of $sz (where $sz >= $sub) coefficients in both
-    // dimensions are non-zero. This leads to braching to specific optimized
+    // dimensions are non-zero. This leads to branching to specific optimized
     // simd versions (e.g. dc-only) so that we get full asm coverage in this
     // test
 
@@ -558,12 +558,12 @@ static void check_loopfilter(void)
 
 static void check_mc(void)
 {
-    LOCAL_ALIGNED_32(uint8_t, buf, [72 * 72 * 2]);
-    LOCAL_ALIGNED_32(uint8_t, dst0, [64 * 64 * 2]);
-    LOCAL_ALIGNED_32(uint8_t, dst1, [64 * 64 * 2]);
+    LOCAL_ALIGNED_64(uint8_t, buf, [72 * 72 * 2]);
+    LOCAL_ALIGNED_64(uint8_t, dst0, [64 * 64 * 2]);
+    LOCAL_ALIGNED_64(uint8_t, dst1, [64 * 64 * 2]);
     VP9DSPContext dsp;
     int op, hsize, bit_depth, filter, dx, dy;
-    declare_func_emms(AV_CPU_FLAG_MMX | AV_CPU_FLAG_MMXEXT, void, uint8_t *dst, ptrdiff_t dst_stride,
+    declare_func(void, uint8_t *dst, ptrdiff_t dst_stride,
                       const uint8_t *ref, ptrdiff_t ref_stride,
                  int h, int mx, int my);
     static const char *const filter_names[4] = {

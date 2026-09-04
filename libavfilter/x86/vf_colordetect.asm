@@ -69,36 +69,59 @@ cglobal detect_range%1, 4, 7, 5, data, stride, width, height, mpeg_min, mpeg_max
     RET
 %endmacro
 
-%macro detect_alpha_fn 3 ; suffix, hsuffix, range
-cglobal detect_alpha%1_%3, 6, 7, 6, color, color_stride, alpha, alpha_stride, width, height, x
+%define FF_ALPHA_STRAIGHT 0x3
+
+%macro detect_alpha_fn 3 ; suffix, hsuffix, mode
+%if ARCH_X86_64
+cglobal detect_alpha%1_%3, 6, 8, 7, color, color_stride, alpha, alpha_stride, width, height, ret, x
+%else
+cglobal detect_alpha%1_%3, 1, 6, 7, color, ret, alpha, x, width, height
+%define color_strideq r1m
+%define alpha_strideq r3m
+    mov alphad,  r2m
+    mov widthd,  r4m
+    mov heightd, r5m
+%endif
     pxor m0, m0
     add colorq, widthq
     add alphaq, widthq
     neg widthq
 %ifidn %3, limited
-    vpbroadcast%2 m3, r6m ; p
-    vpbroadcast%2 m4, r7m ; q
-    vpbroadcast%2 m5, r8m ; k
+    vpbroadcast%2 m3, r6m ; alpha_max
+    vpbroadcast%2 m4, r7m ; mpeg_range
+    vpbroadcast%2 m5, r8m ; offset
+%else
+    vpbroadcast%1 m3, r6m ; alpha_max
+    %ifidn %3, full_off
+        vpbroadcast%1 m4, r8m ; offset
+    %endif
 %endif
+    mova m6, m3
+    xor retd, retd
 .lineloop:
     mov xq, widthq
     .loop:
-    %ifidn %3, full
-        movu m1, [colorq + xq]
-        movu m2, [alphaq + xq]
-        pmaxu%1 m1, m2
-    %else
+    %ifidn %3, limited
         pmovzx%1%2 m1, [colorq + xq]
         pmovzx%1%2 m2, [alphaq + xq]
+        pand m6, m2
         pmull%2 m1, m3
         pmull%2 m2, m4
-    %ifidn %1, b
-        psubusw m1, m5
-    %else
-        pmaxud m1, m5
-        psubd m1, m5
-    %endif
+        %ifidn %1, b
+            psubusw m1, m5
+        %else
+            pmaxud m1, m5
+            psubd m1, m5
+        %endif
         pmaxu%2 m1, m2
+    %else
+        movu m1, [colorq + xq]
+        movu m2, [alphaq + xq]
+        pand m6, m2
+        %ifidn %3, full_off
+            psubus%1 m1, m4
+        %endif
+        pmaxu%1 m1, m2
     %endif
     %if cpuflag(avx512)
         vpternlogq m0, m1, m2, 0xF6 ; m0 |= m1 ^ m2
@@ -106,10 +129,10 @@ cglobal detect_alpha%1_%3, 6, 7, 6, color, color_stride, alpha, alpha_stride, wi
         pxor m1, m2
         por m0, m1
     %endif
-    %ifidn %3, full
-        add xq, mmsize
-    %else
+    %ifidn %3, limited
         add xq, mmsize >> 1
+    %else
+        add xq, mmsize
     %endif
         jl .loop
 
@@ -121,15 +144,28 @@ cglobal detect_alpha%1_%3, 6, 7, 6, color, color_stride, alpha, alpha_stride, wi
 %endif
     jnz .found
 
+%if cpuflag(avx512)
+    vpandnq m1, m6, m3 ; m1 = ~m6 & m3
+    vptestmq k1, m1, m1
+    kortestb k1, k1
+    setnz xb
+%else
+    ptest m6, m3
+    setnc xb ; CF = !(~m6 & m3)
+%endif
+    or retb, xb
+
     add colorq, color_strideq
     add alphaq, alpha_strideq
     dec heightq
     jg .lineloop
-    xor eax, eax
+%ifnidn retd, eax
+    mov eax, retd
+%endif
     RET
 
 .found:
-    mov eax, 1
+    mov eax, FF_ALPHA_STRAIGHT
     RET
 %endmacro
 
@@ -139,6 +175,8 @@ detect_range_fn b
 detect_range_fn w
 detect_alpha_fn b, w, full
 detect_alpha_fn w, d, full
+detect_alpha_fn b, w, full_off
+detect_alpha_fn w, d, full_off
 detect_alpha_fn b, w, limited
 detect_alpha_fn w, d, limited
 %endif
@@ -149,6 +187,8 @@ detect_range_fn b
 detect_range_fn w
 detect_alpha_fn b, w, full
 detect_alpha_fn w, d, full
+detect_alpha_fn b, w, full_off
+detect_alpha_fn w, d, full_off
 detect_alpha_fn b, w, limited
 detect_alpha_fn w, d, limited
 %endif

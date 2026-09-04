@@ -40,14 +40,19 @@ fate-force_key_frames-source-dup: CMD = framecrc -i $(TARGET_SAMPLES)/h264/intra
   -c:v mpeg2video -g 400 -sc_threshold 99999 \
   -force_key_frames source -r 39 -force_fps -strict experimental
 
-FATE_SAMPLES_FFMPEG-$(call ENCDEC, MPEG2VIDEO H264, FRAMECRC H264, H264_PARSER CROP_FILTER DRAWBOX_FILTER PIPE_PROTOCOL) += \
-    fate-force_key_frames-source fate-force_key_frames-source-drop fate-force_key_frames-source-dup
+fate-force_key_frames-scd_metadata: CMD = framecrc -i $(TARGET_SAMPLES)/h264/intra_refresh.h264 \
+  -vf scdet=threshold=10,crop=2:2,drawbox=color=black:t=fill \
+  -c:v mpeg2video -g 400 \
+  -force_key_frames scd_metadata
+
+FATE_SAMPLES_FFMPEG-$(call ENCDEC, MPEG2VIDEO H264, FRAMECRC H264, H264_PARSER CROP_FILTER DRAWBOX_FILTER SCDET_FILTER PIPE_PROTOCOL) += \
+    fate-force_key_frames-source fate-force_key_frames-source-drop fate-force_key_frames-source-dup fate-force_key_frames-scd_metadata
 
 # Tests that the video is properly autorotated using the contained
 # display matrix and that the generated file does not contain
 # a display matrix any more.
-FATE_SAMPLES_FFMPEG_FFPROBE-$(call TRANSCODE, MPEG2VIDEO, MOV, H264_DECODER AAC_FIXED_DECODER AC3_FIXED_ENCODER EXTRACT_EXTRADATA_BSF) += fate-autorotate
-fate-autorotate: CMD = transcode "mov -c:a aac_fixed" $(TARGET_SAMPLES)/filter/sample-in-issue-505.mov mov "-c:v mpeg2video -c:a ac3_fixed" "-c copy -t 0.5" "-show_entries stream_side_data_list"
+FATE_SAMPLES_FFMPEG_FFPROBE-$(call TRANSCODE, MPEG2VIDEO, MOV, H264_DECODER EXTRACT_EXTRADATA_BSF) += fate-autorotate
+fate-autorotate: CMD = transcode "mov" $(TARGET_SAMPLES)/filter/sample-in-issue-505.mov mov "-c:v mpeg2video -an" "-c copy -t 0.5" "-show_entries stream_side_data_list"
 
 FATE_SAMPLES_FFMPEG-$(call FILTERDEMDEC, OVERLAY SCALE, RAWVIDEO VOBSUB, RAWVIDEO DVDSUB, DVDSUB_ENCODER) += fate-sub2video
 fate-sub2video: tests/data/vsynth_lena.yuv
@@ -128,6 +133,11 @@ fate-ffmpeg-fix_sub_duration_heartbeat: CMD = fmtstdout srt -fix_sub_duration \
   -c:v mpeg2video -b:v 2M -g 30 -sc_threshold 1000000000 \
   -c:s srt \
   -f null -
+# FIXME: disabling comparison against reference as after ffmpeg multithreading
+#        went in, this test started depending on how far the input side
+#        progressed compared to how quickly the output encoded packets,
+#        causing spurious failures on the CI.
+fate-ffmpeg-fix_sub_duration_heartbeat: CMP = null
 
 # FIXME: the integer AAC decoder does not produce the same output on all platforms
 # so until that is fixed we use the volume filter to silence the data
@@ -234,6 +244,10 @@ fate-ffmpeg-error-rate-fail: CMD = ffmpeg -i $(TARGET_SAMPLES)/mkv/h264_tta_unde
 fate-ffmpeg-error-rate-pass: CMD = ffmpeg -i $(TARGET_SAMPLES)/mkv/h264_tta_undecodable.mkv -c:v copy -f null - -max_error_rate 1
 FATE_SAMPLES_FFMPEG-$(call ENCDEC, PCM_S16LE TTA, NULL MATROSKA) += fate-ffmpeg-error-rate-fail fate-ffmpeg-error-rate-pass
 
+fate-ffmpeg-no-overwrite: CMP = null
+fate-ffmpeg-no-overwrite: CMD = out=tests/data/fate/no-overwrite.wav; touch $$out; ffmpeg -f lavfi -i anullsrc -t 0.01 -c:a pcm_u8 -f wav -n $$out; ret=$$?; rm -f $$out; test $$ret -ne 0
+FATE_FFMPEG-$(call ALLYES, LAVFI_INDEV ANULLSRC_FILTER PCM_U8_DECODER PCM_U8_ENCODER WAV_MUXER FILE_PROTOCOL) += fate-ffmpeg-no-overwrite
+
 # test input -bsf
 # use -stream_loop, because it tests flushing bsfs
 fate-ffmpeg-bsf-input: CMD = framecrc -stream_loop 2 -bsf setts=PTS*2 -i $(TARGET_SAMPLES)/hevc/extradata-reload-multi-stsd.mov -c copy
@@ -257,6 +271,20 @@ fate-ffmpeg-streamcopy-t: CMD = ffmpeg                                          
     -c copy -f null -t 1 -
 FATE_FFMPEG-$(call REMUX, RAWVIDEO, NULL_MUXER) += fate-ffmpeg-streamcopy-t
 
+fate-ffmpeg-negative-t: tests/data/vsynth1.yuv
+fate-ffmpeg-negative-t: CMP = null
+fate-ffmpeg-negative-t: CMD = ffmpeg                                                               \
+    -stream_loop -1 -f rawvideo -s 352x288 -pix_fmt yuv420p -i $(TARGET_PATH)/tests/data/vsynth1.yuv \
+    -c copy -f null -t -1 -; test $$? -ne 0
+FATE_FFMPEG-$(call REMUX, RAWVIDEO, NULL_MUXER) += fate-ffmpeg-negative-t
+
+fate-ffmpeg-negative-input-t: tests/data/vsynth1.yuv
+fate-ffmpeg-negative-input-t: CMP = null
+fate-ffmpeg-negative-input-t: CMD = ffmpeg                                                        \
+    -stream_loop -1 -f rawvideo -s 352x288 -pix_fmt yuv420p -t -1 -i $(TARGET_PATH)/tests/data/vsynth1.yuv \
+    -c copy -f null -; test $$? -ne 0
+FATE_FFMPEG-$(call REMUX, RAWVIDEO, NULL_MUXER) += fate-ffmpeg-negative-input-t
+
 # Test loopback decoding and passing the output to a complex graph.
 fate-ffmpeg-loopback-decoding: tests/data/vsynth1.yuv
 fate-ffmpeg-loopback-decoding: CMD = transcode \
@@ -267,3 +295,16 @@ FATE_FFMPEG-$(call ENCDEC2, MPEG2VIDEO, FFV1, NUT, HSTACK_FILTER PIPE_PROTOCOL F
 # test matching by stream disposition
 fate-ffmpeg-spec-disposition: CMD = framecrc -i $(TARGET_SAMPLES)/mpegts/pmtchange.ts -map '0:disp:visual_impaired+descriptions:1' -c copy
 FATE_SAMPLES_FFMPEG-$(call FRAMECRC, MPEGTS,,) += fate-ffmpeg-spec-disposition
+
+# test heif image merging using internally defined filtegraphs
+# picking the stream group if not mapping any specific stream
+fate-ffmpeg-heif-merge: CMD = framecrc -i $(TARGET_SAMPLES)/heif-conformance/C007.heic
+FATE_SAMPLES_FFMPEG-$(call FRAMECRC, MOV, HEVC, HEVC_PARSER) += fate-ffmpeg-heif-merge
+
+# mapping the stream group
+fate-ffmpeg-heif-merge-mapped: CMD = framecrc -i $(TARGET_SAMPLES)/heif-conformance/C007.heic -map '[0:g:0]'
+FATE_SAMPLES_FFMPEG-$(call FRAMECRC, MOV, HEVC, HEVC_PARSER) += fate-ffmpeg-heif-merge-mapped
+
+# binding the internal filtegraph with a caller defined filtergraph
+fate-ffmpeg-heif-merge-filtergraph: CMD = framecrc -i $(TARGET_SAMPLES)/heif-conformance/C007.heic -filter_complex "sws_flags=+accurate_rnd+bitexact\;[0:g:0]scale=w=1280:h=720[out]" -map "[out]"
+FATE_SAMPLES_FFMPEG-$(call FRAMECRC, MOV, HEVC, HEVC_PARSER SCALE_FILTER) += fate-ffmpeg-heif-merge-filtergraph

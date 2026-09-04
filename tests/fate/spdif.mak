@@ -1,4 +1,4 @@
-# This padds the AAC frames to 16 bit words (the actual size is
+# This pads the AAC frames to 16 bit words (the actual size is
 # still available in the ADTS headers).
 FATE_SPDIF_REMUX-$(call ALLYES, AAC_DEMUXER AAC_DECODER) += fate-spdif-aac-remux
 fate-spdif-aac-remux: CMD = transcode aac $(TARGET_SAMPLES)/aac/foo.aac spdif "-c copy" "-c copy"
@@ -39,6 +39,9 @@ fate-spdif-mp3-remux: CMD = transcode mp3 $(TARGET_SAMPLES)/audiomatch/square3.m
 
 FATE_SPDIF-$(call DEMMUX, TRUEHD, SPDIF) += fate-spdif-truehd
 fate-spdif-truehd: CMD = md5 -i $(TARGET_SAMPLES)/truehd/atmos.thd -c copy -f spdif
+
+FATE_SPDIF-$(call DEMMUX, TRUEHD, SPDIF) += fate-spdif-truehd-branch-padding
+fate-spdif-truehd-branch-padding: CMD = md5 -i $(TARGET_SAMPLES)/truehd/spdifenc-branch-padding.thd -c copy -f spdif
 
 # Make the demuxer support all the formats supported by the muxer
 # and switch the md5 tests to remux tests?

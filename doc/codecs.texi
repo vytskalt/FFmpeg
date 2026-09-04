@@ -178,6 +178,9 @@ edge padding bug (autodetected per fourcc/version)
 Workaround various bugs in microsoft broken decoders.
 @item trunc
 trancated frames
+@item h264_dp_nnz
+H.264 nC derivation for partitioned slices, as done by JM rather than by
+9.2.1 (autodetected)
 @end table
 
 @item strict @var{integer} (@emph{decoding/encoding,audio,video})
@@ -646,6 +649,8 @@ Do not skip samples and export skip information as frame side data.
 Do not reset ASS ReadOrder field on flush.
 @item icc_profiles
 Generate/parse embedded ICC profiles from/to colorimetry tags.
+@item fixed_frame_size
+Force audio encoders to use a fixed frame size.
 @end table
 
 @item export_side_data @var{flags} (@emph{decoding/encoding,audio,video,subtitles})
@@ -912,6 +917,14 @@ Possible values:
 @item bottom
 
 @end table
+
+@item alpha_mode @var{integer} (@emph{decoding/encoding,video})
+Possible values:
+@table @samp
+@item premultiplied
+@item straight
+@end table
+
 
 @item log_level_offset @var{integer}
 Set the log level offset.

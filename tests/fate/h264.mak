@@ -193,6 +193,10 @@ FATE_H264_REINIT_TESTS := large_420_8-to-small_420_8                    \
                           small_422_9-to-small_420_9                    \
 
 FATE_H264  := $(FATE_H264:%=fate-h264-conformance-%)                    \
+              fate-h264-data-partitioning                               \
+              fate-h264-data-partitioning-ab                            \
+              fate-h264-data-partitioning-cip                           \
+              fate-h264-data-partitioning-cip-strict                    \
               fate-h264-intra-refresh-recovery                          \
               fate-h264-lossless                                        \
               fate-h264-3386                                            \
@@ -235,6 +239,11 @@ FATE_H264-$(call FRAMECRC, MOV H264, H264, H264_PARSER H264_MUXER H264_MP4TOANNE
 
 FATE_H264-$(call FRAMECRC, MOV H264,, H264_PARSER MOV_MUXER DTS2PTS_BSF) += fate-h264-bsf-dts2pts
 
+FATE_H264-$(call REMUX, H264, MOV_DEMUXER H264_REDUNDANT_PPS_BSF H264_DECODER H264_PARSER RAWVIDEO_ENCODER) += fate-h264-bsf-redundant-pps-mov
+FATE_H264-$(call REMUX, H264, H264_PARSER H264_REDUNDANT_PPS_BSF H264_DECODER RAWVIDEO_ENCODER) += fate-h264-bsf-redundant-pps-annexb
+FATE_H264-$(call REMUX, NUT, MOV_DEMUXER H264_REDUNDANT_PPS_BSF H264_DECODER) += fate-h264-bsf-redundant-pps-side-data
+FATE_H264-$(call REMUX, NUT, MOV_DEMUXER H264_REDUNDANT_PPS_BSF H264_DECODER SCALE_FILTER RAWVIDEO_ENCODER) += fate-h264-bsf-redundant-pps-side-data2
+
 FATE_H264-$(call FRAMECRC, MATROSKA, H264) += fate-h264-direct-bff
 FATE_H264-$(call FRAMECRC, FLV, H264, SCALE_FILTER) += fate-h264-brokensps-2580
 FATE_H264-$(call FRAMECRC, MXF, H264, PCM_S24LE_DECODER SCALE_FILTER ARESAMPLE_FILTER) += fate-h264-xavc-4389
@@ -250,7 +259,7 @@ fate-h264: $(FATE_H264-yes) $(FATE_H264_FFPROBE-yes)
 
 fate-h264-conformance-aud_mw_e:                   CMD = framecrc -i $(TARGET_SAMPLES)/h264-conformance/AUD_MW_E.264
 
-#force framerate so that the option is tested, theres no other case that tests it, its not needed at all otherwise here
+#force framerate so that the option is tested, there's no other case that tests it, its not needed at all otherwise here
 fate-h264-conformance-ba1_ft_c:                   CMD = framecrc -framerate 19 -i $(TARGET_SAMPLES)/h264-conformance/BA1_FT_C.264
 
 fate-h264-conformance-ba1_sony_d:                 CMD = framecrc -i $(TARGET_SAMPLES)/h264-conformance/BA1_Sony_D.jsv
@@ -460,6 +469,14 @@ fate-h264-xavc-4389:                              CMD = framecrc -i $(TARGET_SAM
 fate-h264-attachment-631:                         CMD = framecrc -i $(TARGET_SAMPLES)/h264/attachment631-small.mp4 -an -max_error_rate 0.96
 fate-h264-skip-nokey:                             CMD = framecrc -skip_frame nokey -i $(TARGET_SAMPLES)/h264/h264_intra_first-small.ts -vf scale -af aresample
 fate-h264-skip-nointra:                           CMD = framecrc -skip_frame nointra -i $(TARGET_SAMPLES)/h264/h264_intra_first-small.ts -vf scale -af aresample
+# slice data partitioning: A+B+C, and with partition C legitimately absent
+fate-h264-data-partitioning:                      CMD = framecrc -i $(TARGET_SAMPLES)/h264/data_partitioning.h264
+fate-h264-data-partitioning-ab:                   CMD = framecrc -i $(TARGET_SAMPLES)/h264/data_partitioning_ab.h264
+# constrained_intra_pred_flag=1, which changes the nC derivation (9.2.1)
+fate-h264-data-partitioning-cip:                  CMD = framecrc -bug h264_dp_nnz -i $(TARGET_SAMPLES)/h264/data_partitioning_cip.h264
+# same stream read the way 9.2.1 is written instead of the way JM does it; that
+# desynchronises the residual, so pin the threads to keep concealment stable
+fate-h264-data-partitioning-cip-strict:           CMD = threads=1 framecrc -bug 0 -i $(TARGET_SAMPLES)/h264/data_partitioning_cip.h264
 fate-h264-intra-refresh-recovery:                 CMD = framecrc -i $(TARGET_SAMPLES)/h264/intra_refresh.h264 -frames:v 10
 fate-h264-invalid-ref-mod:                        CMD = framecrc -i $(TARGET_SAMPLES)/h264/h264refframeregression.mp4 -an -frames 10 -pix_fmt yuv420p10le -vf scale
 fate-h264-lossless:                               CMD = framecrc -i $(TARGET_SAMPLES)/h264/lossless.h264
@@ -477,6 +494,18 @@ fate-h264-dts_5frames:                            CMD = probeframes $(TARGET_SAM
 fate-h264-afd:                                    CMD = run ffprobe$(PROGSSUF)$(EXESUF) -bitexact -apply_cropping 0 \
                                                         -show_entries frame=width,height,crop_top,crop_bottom,crop_left,crop_right:frame_side_data_list:stream=width,height,coded_width,coded_height \
                                                         $(TARGET_SAMPLES)/h264/bbc2.sample.h264
+
+fate-h264-bsf-redundant-pps-mov: CMD = transcode mov $(TARGET_SAMPLES)/mov/frag_overlap.mp4 h264 "-map 0:v -c copy -bsf h264_redundant_pps"
+
+# This file has changing pic_init_qp_minus26.
+fate-h264-bsf-redundant-pps-annexb: CMD = transcode h264 $(TARGET_SAMPLES)/h264-conformance/CABA3_TOSHIBA_E.264 h264 "-map 0:v -c copy -bsf h264_redundant_pps"
+
+# These two tests test that new extradata in packet side data is properly
+# modified by h264_redundant_pps. nut is used as destination container
+# because it can store extradata updates (in its experimental mode);
+# setting -syncpoints none is a hack to use nut version 4.
+fate-h264-bsf-redundant-pps-side-data: CMD = transcode mov $(TARGET_SAMPLES)/h264/thezerotheorem-cut.mp4 nut "-map 0:v -c copy -bsf h264_redundant_pps -syncpoints none -strict experimental" "-c copy"
+fate-h264-bsf-redundant-pps-side-data2: CMD = transcode mov $(TARGET_SAMPLES)/h264/extradata-reload-multi-stsd.mov nut "-map 0:v -c copy -bsf h264_redundant_pps -syncpoints none -strict experimental"
 
 fate-h264-encparams: CMD = venc_data $(TARGET_SAMPLES)/h264-conformance/FRext/FRExt_MMCO4_Sony_B.264 0 1
 FATE_SAMPLES_DUMP_DATA += fate-h264-encparams
